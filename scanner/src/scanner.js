@@ -32,6 +32,7 @@ function makeFinding({
 
 async function runScan(target, request = fetch) {
   const baseUrl = validateTarget(target);
+  const startedAt = Date.now();
   const findings = [];
 
   async function get(path, token) {
@@ -49,7 +50,7 @@ async function runScan(target, request = fetch) {
     });
   }
 
-  // Check 1: Protected endpoint must reject unauthenticated requests.
+  // Check 1: A protected endpoint must reject missing authentication.
   try {
     const response = await get('/api/v1/users/1');
 
@@ -61,7 +62,8 @@ async function runScan(target, request = fetch) {
       evidence = 'Unauthenticated request was rejected with HTTP 401.';
     } else if (response.status === 200) {
       status = 'FAIL';
-      evidence = 'Unauthenticated request accessed a protected endpoint (HTTP 200).';
+      evidence =
+        'Unauthenticated request accessed a protected endpoint (HTTP 200).';
     }
 
     findings.push(
@@ -91,7 +93,7 @@ async function runScan(target, request = fetch) {
     );
   }
 
-  // Check 2: Alice must not access Bob's profile.
+  // Check 2: Alice must not retrieve Bob's profile.
   try {
     const response = await get('/api/v1/users/2', ALICE_TOKEN);
     const body = await readJson(response);
@@ -101,11 +103,12 @@ async function runScan(target, request = fetch) {
 
     if (response.status === 403 || response.status === 404) {
       status = 'PASS';
-      evidence = `Access to another user's profile was denied (HTTP ${response.status}).`;
+      evidence =
+        `Access to another user's profile was denied (HTTP ${response.status}).`;
     } else if (response.status === 200 && body?.user?.id === 2) {
       status = 'FAIL';
       evidence =
-        'Alice retrieved Bob’s profile; the response exposed user ID 2.';
+        "Alice retrieved Bob's profile; the response exposed user ID 2.";
     } else if (response.status === 401) {
       evidence =
         'The test token was rejected. The authorization check could not be validated.';
@@ -138,7 +141,7 @@ async function runScan(target, request = fetch) {
     );
   }
 
-  // Check 3: An ordinary user must not access admin reports.
+  // Check 3: A regular user must not access admin reports.
   try {
     const response = await get('/api/v1/admin/reports', ALICE_TOKEN);
 
@@ -147,7 +150,8 @@ async function runScan(target, request = fetch) {
 
     if (response.status === 403) {
       status = 'PASS';
-      evidence = 'Ordinary user was denied access to admin reports (HTTP 403).';
+      evidence =
+        'Ordinary user was denied access to admin reports (HTTP 403).';
     } else if (response.status === 200) {
       status = 'FAIL';
       evidence =
@@ -184,7 +188,7 @@ async function runScan(target, request = fetch) {
     );
   }
 
-  const counts = findings.reduce(
+  const summary = findings.reduce(
     (result, finding) => {
       result[finding.status] += 1;
       return result;
@@ -194,8 +198,10 @@ async function runScan(target, request = fetch) {
 
   return {
     target: baseUrl,
+    generatedAt: new Date().toISOString(),
+    durationMs: Date.now() - startedAt,
     checksRun: findings.length,
-    summary: counts,
+    summary,
     findings,
   };
 }

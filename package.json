@@ -6,7 +6,8 @@
   "scripts": {
     "test": "jest --runInBand",
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "scan": "node scanner/src/cli.js"
   },
   "repository": {
     "type": "git",
