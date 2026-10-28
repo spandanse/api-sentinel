@@ -30,7 +30,22 @@ function makeFinding({
   };
 }
 
-async function runScan(target, request = fetch) {
+function describeRequestError(error) {
+  if (
+    error?.name === 'TimeoutError' ||
+    error?.name === 'AbortError'
+  ) {
+    return 'Request could not be completed: timed out or was aborted.';
+  }
+
+  if (error?.name === 'TypeError') {
+    return 'Request could not be completed: connection failed or request was rejected.';
+  }
+
+  return 'Request could not be completed due to an unexpected error.';
+}
+
+async function runScan(target, request = fetch, timeoutMs = 3000) {
   const baseUrl = validateTarget(target);
   const startedAt = Date.now();
   const findings = [];
@@ -46,7 +61,7 @@ async function runScan(target, request = fetch) {
       method: 'GET',
       headers,
       redirect: 'manual',
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   }
 
@@ -86,7 +101,7 @@ async function runScan(target, request = fetch) {
         status: 'ERROR',
         severity: 'high',
         confidence: 'low',
-        evidence: `Request could not be completed: ${error.name}.`,
+        evidence: describeRequestError(error),
         remediation:
           'Check that the local test API is running and reachable.',
       })
@@ -134,7 +149,7 @@ async function runScan(target, request = fetch) {
         status: 'ERROR',
         severity: 'high',
         confidence: 'low',
-        evidence: `Request could not be completed: ${error.name}.`,
+        evidence: describeRequestError(error),
         remediation:
           'Check that the local test API is running and the test account is configured.',
       })
@@ -181,7 +196,7 @@ async function runScan(target, request = fetch) {
         status: 'ERROR',
         severity: 'high',
         confidence: 'low',
-        evidence: `Request could not be completed: ${error.name}.`,
+        evidence: describeRequestError(error),
         remediation:
           'Check that the local test API is running and the test account is configured.',
       })

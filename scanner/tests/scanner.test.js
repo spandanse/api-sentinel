@@ -75,4 +75,103 @@ describe('Scanner findings', () => {
       expect(options.redirect).toBe('manual');
     }
   });
+
+  test('reports request failures as ERROR instead of crashing', async () => {
+    const fakeRequest = jest.fn(async () => {
+      throw new TypeError('fetch failed');
+    });
+
+    const report = await runScan(
+      'http://127.0.0.1:4001',
+      fakeRequest
+    );
+
+    expect(report.checksRun).toBe(3);
+    expect(report.summary.ERROR).toBe(3);
+    expect(report.summary.FAIL).toBe(0);
+
+    for (const finding of report.findings) {
+      expect(finding.status).toBe('ERROR');
+      expect(finding.evidence).toContain(
+        'Request could not be completed'
+      );
+    }
+  });
+
+  test('reports timeouts as ERROR instead of a security failure', async () => {
+    const fakeRequest = jest.fn(async () => {
+      const error = new Error('The operation timed out');
+      error.name = 'TimeoutError';
+      throw error;
+    });
+
+    const report = await runScan(
+      'http://127.0.0.1:4001',
+      fakeRequest
+    );
+
+    expect(report.checksRun).toBe(3);
+    expect(report.summary.ERROR).toBe(3);
+    expect(report.summary.FAIL).toBe(0);
+
+    expect(
+      report.findings.every((finding) =>
+        finding.evidence.includes('timed out or was aborted')
+      )
+    ).toBe(true);
+  });
+
+  test('does not expose raw exception messages in findings', async () => {
+    const fakeRequest = jest.fn(async () => {
+      throw new Error(
+        'Sensitive internal detail: /home/private/config.env'
+      );
+    });
+
+    const report = await runScan(
+      'http://127.0.0.1:4001',
+      fakeRequest
+    );
+
+    expect(report.summary.ERROR).toBe(3);
+
+    for (const finding of report.findings) {
+      expect(finding.evidence).not.toContain('/home/private/config.env');
+    }
+  });
+
+  test('aborts a request when the configured timeout expires', async () => {
+    const fakeRequest = jest.fn((_url, options) => {
+      return new Promise((resolve, reject) => {
+        const { signal } = options;
+
+        if (signal.aborted) {
+          reject(signal.reason);
+          return;
+        }
+
+        signal.addEventListener(
+          'abort',
+          () => reject(signal.reason),
+          { once: true }
+        );
+      });
+    });
+
+    const report = await runScan(
+      'http://127.0.0.1:4001',
+      fakeRequest,
+      10
+    );
+
+    expect(fakeRequest).toHaveBeenCalledTimes(3);
+    expect(report.summary.ERROR).toBe(3);
+    expect(report.summary.FAIL).toBe(0);
+
+    expect(
+      report.findings.every((finding) =>
+        finding.evidence.includes('timed out or was aborted')
+      )
+    ).toBe(true);
+  });
 });
