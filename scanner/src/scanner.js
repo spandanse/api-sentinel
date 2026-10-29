@@ -30,6 +30,10 @@ function makeFinding({
   };
 }
 
+function confidenceForStatus(status) {
+  return status === 'PASS' || status === 'FAIL' ? 'high' : 'low';
+}
+
 function describeRequestError(error) {
   if (
     error?.name === 'TimeoutError' ||
@@ -87,7 +91,7 @@ async function runScan(target, request = fetch, timeoutMs = 3000) {
         title: 'Authentication enforcement',
         status,
         severity: 'high',
-        confidence: status === 'PASS' || status === 'FAIL' ? 'high' : 'low',
+        confidence: confidenceForStatus(status),
         evidence,
         remediation:
           'Require valid authentication on protected endpoints and reject missing or invalid credentials.',
@@ -116,10 +120,13 @@ async function runScan(target, request = fetch, timeoutMs = 3000) {
     let status = 'ERROR';
     let evidence = `Authenticated request returned HTTP ${response.status}.`;
 
-    if (response.status === 403 || response.status === 404) {
+    if (response.status === 403) {
       status = 'PASS';
       evidence =
-        `Access to another user's profile was denied (HTTP ${response.status}).`;
+        "Access to another user's profile was denied with HTTP 403.";
+    } else if (response.status === 404) {
+      evidence =
+        'HTTP 404 did not establish whether access was denied or the record was absent.';
     } else if (response.status === 200 && body?.user?.id === 2) {
       status = 'FAIL';
       evidence =
@@ -135,7 +142,7 @@ async function runScan(target, request = fetch, timeoutMs = 3000) {
         title: 'Broken object-level authorization (BOLA/IDOR)',
         status,
         severity: 'high',
-        confidence: status === 'PASS' || status === 'FAIL' ? 'high' : 'low',
+        confidence: confidenceForStatus(status),
         evidence,
         remediation:
           'Verify object ownership or explicit access permissions on every request that uses a user-controlled object ID.',
@@ -182,7 +189,7 @@ async function runScan(target, request = fetch, timeoutMs = 3000) {
         title: 'Broken role-based authorization',
         status,
         severity: 'high',
-        confidence: status === 'PASS' || status === 'FAIL' ? 'high' : 'low',
+        confidence: confidenceForStatus(status),
         evidence,
         remediation:
           'Enforce server-side role or permission checks on administrator-only endpoints; authentication alone is insufficient.',

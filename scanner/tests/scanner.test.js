@@ -120,6 +120,33 @@ describe('Scanner findings', () => {
     }
   });
 
+  test('treats a BOLA HTTP 404 as inconclusive', async () => {
+    const fakeRequest = jest.fn(async (url) => {
+      if (url.endsWith('/api/v1/users/1')) {
+        return { status: 401, json: async () => ({}) };
+      }
+
+      if (url.endsWith('/api/v1/users/2')) {
+        return { status: 404, json: async () => ({}) };
+      }
+
+      return { status: 403, json: async () => ({}) };
+    });
+
+    const report = await runScan(
+      'http://127.0.0.1:4001',
+      fakeRequest
+    );
+
+    const bolaFinding = report.findings.find(
+      (finding) => finding.id === 'AUTHZ-001'
+    );
+
+    expect(bolaFinding.status).toBe('ERROR');
+    expect(bolaFinding.confidence).toBe('low');
+    expect(bolaFinding.evidence).toContain('HTTP 404 did not establish');
+  });
+
   test('does not confirm BOLA when the HTTP 200 body is invalid JSON', async () => {
     const fakeRequest = jest.fn(async (url) => ({
       status: 200,
