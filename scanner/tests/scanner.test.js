@@ -21,6 +21,45 @@ describe('Scanner target restrictions', () => {
 });
 
 describe('Scanner findings', () => {
+  test('returns a consistent structure for every finding', async () => {
+    const fakeRequest = jest.fn(async () => ({
+      status: 401,
+      json: async () => ({ error: 'Authentication required' }),
+    }));
+
+    const report = await runScan(
+      'http://127.0.0.1:4001',
+      fakeRequest
+    );
+
+    expect(report).toEqual(
+      expect.objectContaining({
+        target: 'http://127.0.0.1:4001',
+        generatedAt: expect.any(String),
+        durationMs: expect.any(Number),
+        checksRun: 3,
+        summary: {
+          PASS: expect.any(Number),
+          FAIL: expect.any(Number),
+          ERROR: expect.any(Number),
+        },
+        findings: expect.any(Array),
+      })
+    );
+
+    for (const finding of report.findings) {
+      expect(finding).toEqual({
+        id: expect.any(String),
+        title: expect.any(String),
+        status: expect.stringMatching(/^(PASS|FAIL|ERROR)$/),
+        severity: expect.any(String),
+        confidence: expect.any(String),
+        evidence: expect.any(String),
+        remediation: expect.any(String),
+      });
+    }
+  });
+
   test('detects the three intentional vulnerabilities', async () => {
     const fakeRequest = jest.fn(async (url) => {
       if (url.endsWith('/api/v1/users/1')) {
@@ -60,6 +99,50 @@ describe('Scanner findings', () => {
       'AUTHZ-001',
       'AUTHZ-002',
     ]);
+  });
+
+  test('treats unexpected HTTP statuses as inconclusive', async () => {
+    const fakeRequest = jest.fn(async () => ({
+      status: 500,
+      json: async () => ({ error: 'Internal server error' }),
+    }));
+
+    const report = await runScan(
+      'http://127.0.0.1:4001',
+      fakeRequest
+    );
+
+    expect(report.summary.ERROR).toBe(3);
+    expect(report.summary.FAIL).toBe(0);
+
+    for (const finding of report.findings) {
+      expect(finding.status).toBe('ERROR');
+    }
+  });
+
+  test('does not confirm BOLA when the HTTP 200 body is invalid JSON', async () => {
+    const fakeRequest = jest.fn(async (url) => ({
+      status: 200,
+      json: async () => {
+        if (url.endsWith('/api/v1/users/2')) {
+          throw new SyntaxError('Invalid JSON');
+        }
+
+        return { user: { id: 1 } };
+      },
+    }));
+
+    const report = await runScan(
+      'http://127.0.0.1:4001',
+      fakeRequest
+    );
+
+    const bolaFinding = report.findings.find(
+      (finding) => finding.id === 'AUTHZ-001'
+    );
+
+    expect(bolaFinding.status).toBe('ERROR');
+    expect(bolaFinding.evidence).not.toContain('retrieved Bob');
   });
 
   test('uses GET requests and disables automatic redirects', async () => {
