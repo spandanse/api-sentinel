@@ -284,4 +284,39 @@ describe('Scanner findings', () => {
       )
     ).toBe(true);
   });
+
+  test('continues running checks when one request fails', async () => {
+    const fakeRequest = jest.fn(async (url) => {
+      // Simulate a connection failure on the first check.
+      if (url.endsWith('/api/v1/users/1')) {
+        throw new TypeError('fetch failed');
+      }
+
+      // The remaining two checks receive a denial response.
+      return {
+        status: 403,
+        json: async () => ({ error: 'Forbidden' }),
+      };
+    });
+
+    const report = await runScan(
+      'http://127.0.0.1:4001',
+      fakeRequest
+    );
+
+    expect(fakeRequest).toHaveBeenCalledTimes(3);
+    expect(report.checksRun).toBe(3);
+    expect(report.summary).toEqual({
+      PASS: 2,
+      FAIL: 0,
+      ERROR: 1,
+    });
+
+    expect(report.findings.map((finding) => finding.status)).toEqual([
+      'ERROR',
+      'PASS',
+      'PASS',
+    ]);
+  });
+
 });
