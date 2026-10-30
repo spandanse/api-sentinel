@@ -1,5 +1,8 @@
 const { runScan } = require('./scanner');
-const { writeReport } = require('./report');
+const {
+  writeReport,
+  writeHtmlReport,
+} = require('./report');
 
 async function main() {
   const target = process.argv[2] || 'http://127.0.0.1:4001';
@@ -14,12 +17,14 @@ async function main() {
     return;
   }
 
-  let reportPath;
+  let jsonPath;
+  let htmlPath;
 
   try {
-    reportPath = writeReport(report);
+    jsonPath = writeReport(report);
+    htmlPath = writeHtmlReport(report);
   } catch (error) {
-    console.error(`Could not save the report: ${error.message}`);
+    console.error(`Could not save the reports: ${error.message}`);
     process.exitCode = 1;
     return;
   }
@@ -38,7 +43,8 @@ async function main() {
     console.log(`Evidence: ${finding.evidence}`);
   }
 
-  console.log(`\nJSON report saved to: ${reportPath}`);
+  console.log(`\nJSON report saved to: ${jsonPath}`);
+  console.log(`HTML report saved to: ${htmlPath}`);
 }
 
 main().catch((error) => {

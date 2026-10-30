@@ -1,8 +1,12 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+
 const {
   writeReport,
+  writeHtmlReport,
+  renderHtmlReport,
+  escapeHtml,
   validateReport,
 } = require('../src/report');
 
@@ -36,7 +40,7 @@ function createValidReport() {
   };
 }
 
-describe('JSON report writer', () => {
+describe('Report writers', () => {
   let outputDir;
 
   beforeEach(() => {
@@ -49,7 +53,7 @@ describe('JSON report writer', () => {
     fs.rmSync(outputDir, { recursive: true, force: true });
   });
 
-  test('writes a validated report that can be read back as JSON', () => {
+  test('writes a validated JSON report', () => {
     const report = createValidReport();
 
     expect(validateReport(report)).toBe(true);
@@ -61,12 +65,49 @@ describe('JSON report writer', () => {
     expect(saved).toEqual(report);
   });
 
+  test('writes an HTML report', () => {
+    const report = createValidReport();
+
+    const filePath = writeHtmlReport(report, outputDir);
+    const saved = fs.readFileSync(filePath, 'utf8');
+
+    expect(path.extname(filePath)).toBe('.html');
+    expect(saved).toContain('<!DOCTYPE html>');
+    expect(saved).toContain('API Sentinel');
+    expect(saved).toContain('Authentication enforcement');
+    expect(saved).toContain('Another user profile was accessible.');
+    expect(saved).toContain('Remediation');
+  });
+
   test('creates the output directory when it does not exist', () => {
     const nestedDir = path.join(outputDir, 'nested', 'reports');
 
     const filePath = writeReport(createValidReport(), nestedDir);
 
     expect(fs.existsSync(filePath)).toBe(true);
+  });
+
+  test('escapes HTML special characters', () => {
+    expect(escapeHtml(`<script>alert("x") & 'y'</script>`)).toBe(
+      '&lt;script&gt;alert(&quot;x&quot;) &amp; &#39;y&#39;&lt;/script&gt;'
+    );
+  });
+
+  test('escapes untrusted report content in HTML output', () => {
+    const report = createValidReport();
+    report.target = '<script>alert("target")</script>';
+    report.findings[0].evidence = '<img src=x onerror=alert(1)>';
+
+    const html = renderHtmlReport(report);
+
+    expect(html).toContain(
+      '&lt;script&gt;alert(&quot;target&quot;)&lt;/script&gt;'
+    );
+    expect(html).toContain(
+      '&lt;img src=x onerror=alert(1)&gt;'
+    );
+    expect(html).not.toContain('<script>alert');
+    expect(html).not.toContain('<img src=x');
   });
 
   test('rejects summary counts that do not match findings', () => {
