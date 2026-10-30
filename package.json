@@ -7,7 +7,8 @@
     "test": "jest --runInBand",
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "scan": "node scanner/src/cli.js"
+    "scan": "node scanner/src/cli.js",
+    "db:migrate": "node scripts/migrate.js"
   },
   "repository": {
     "type": "git",
@@ -21,7 +22,9 @@
   "homepage": "https://github.com/spandanse/api-sentinel#readme",
   "dependencies": {
     "dotenv": "^18.0.9",
-    "express": "^5.3.0"
+    "express": "^5.3.0",
+    "pg": "^8.23.1",
+    "sequelize": "^6.37.8"
   },
   "devDependencies": {
     "jest": "^30.5.2",
