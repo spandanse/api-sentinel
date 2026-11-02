@@ -2,6 +2,7 @@ require('dotenv').config({ quiet: true });
 
 const express = require('express');
 const scansRouter = require('./routes/scans.routes');
+const authRouter = require('./routes/auth.routes');
 const notFoundHandler = require('./middleware/notFound.middleware');
 const errorHandler = require('./middleware/error.middleware');
 
@@ -16,6 +17,9 @@ app.get('/api/v1/health', (req, res) => {
     service: 'api-sentinel',
   });
 });
+
+// Authentication routes.
+app.use('/api/v1/auth', authRouter);
 
 // Scan management routes.
 app.use('/api/v1/scans', scansRouter);

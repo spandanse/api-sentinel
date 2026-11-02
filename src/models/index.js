@@ -1,5 +1,6 @@
 const Scan = require('./scan.model');
 const Finding = require('./finding.model');
+const User = require('./user.model');
 
 Scan.hasMany(Finding, {
   foreignKey: 'scanId',
@@ -15,4 +16,5 @@ Finding.belongsTo(Scan, {
 module.exports = {
   Scan,
   Finding,
+  User,
 };

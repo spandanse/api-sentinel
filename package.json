@@ -21,6 +21,7 @@
   },
   "homepage": "https://github.com/spandanse/api-sentinel#readme",
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "dotenv": "^18.0.9",
     "express": "^5.3.0",
     "pg": "^8.23.1",
