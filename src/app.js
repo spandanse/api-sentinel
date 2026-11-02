@@ -1,4 +1,7 @@
+require('dotenv').config({ quiet: true });
+
 const express = require('express');
+const scansRouter = require('./routes/scans.routes');
 
 const app = express();
 
@@ -11,5 +14,8 @@ app.get('/api/v1/health', (req, res) => {
     service: 'api-sentinel',
   });
 });
+
+// Scan management routes.
+app.use('/api/v1/scans', scansRouter);
 
 module.exports = app;
