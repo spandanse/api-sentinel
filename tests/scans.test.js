@@ -7,11 +7,31 @@ jest.mock('../src/models', () => ({
 }));
 
 const request = require('supertest');
+const jwt = require('jsonwebtoken');
 const app = require('../src/app');
 const { Scan } = require('../src/models');
 
+function authenticatedGet(path) {
+  const token = jwt.sign(
+    {},
+    process.env.JWT_SECRET,
+    {
+      algorithm: 'HS256',
+      subject: 'test-user-id',
+      expiresIn: '1h',
+      issuer: 'api-sentinel',
+      audience: 'api-sentinel-client',
+    }
+  );
+
+  return request(app)
+    .get(path)
+    .set('Authorization', `Bearer ${token}`);
+}
+
 describe('Scan management API', () => {
   beforeEach(() => {
+    process.env.JWT_SECRET = 'test-secret-for-jest-only';
     jest.clearAllMocks();
   });
 
@@ -27,8 +47,7 @@ describe('Scan management API', () => {
         count: 12,
       });
 
-      const response = await request(app)
-        .get('/api/v1/scans?page=1&limit=2');
+      const response = await authenticatedGet('/api/v1/scans?page=1&limit=2');
 
       expect(response.status).toBe(200);
       expect(response.body.data).toEqual(mockScans);
@@ -56,8 +75,7 @@ describe('Scan management API', () => {
         count: 0,
       });
 
-      const response = await request(app)
-        .get('/api/v1/scans');
+      const response = await authenticatedGet('/api/v1/scans');
 
       expect(response.status).toBe(200);
       expect(response.body.pagination).toEqual({
@@ -69,8 +87,7 @@ describe('Scan management API', () => {
     });
 
     test('rejects invalid pagination parameters', async () => {
-      const response = await request(app)
-        .get('/api/v1/scans?page=0&limit=100');
+      const response = await authenticatedGet('/api/v1/scans?page=0&limit=100');
 
       expect(response.status).toBe(400);
       expect(response.body.error).toBe(
@@ -93,8 +110,7 @@ describe('Scan management API', () => {
 
       Scan.findByPk.mockResolvedValue(mockScan);
 
-      const response = await request(app)
-        .get('/api/v1/scans/3fd32cdf-0f5d-49c7-9890-60292f142148');
+      const response = await authenticatedGet('/api/v1/scans/3fd32cdf-0f5d-49c7-9890-60292f142148');
 
       expect(response.status).toBe(200);
       expect(response.body.data).toEqual(mockScan);
@@ -120,8 +136,7 @@ describe('Scan management API', () => {
     });
 
     test('rejects an invalid scan ID', async () => {
-      const response = await request(app)
-        .get('/api/v1/scans/not-a-uuid');
+      const response = await authenticatedGet('/api/v1/scans/not-a-uuid');
 
       expect(response.status).toBe(400);
       expect(response.body.error).toBe('Invalid scan ID.');
@@ -131,11 +146,100 @@ describe('Scan management API', () => {
     test('returns 404 when the scan does not exist', async () => {
       Scan.findByPk.mockResolvedValue(null);
 
-      const response = await request(app)
-        .get('/api/v1/scans/3fd32cdf-0f5d-49c7-9890-60292f142148');
+      const response = await authenticatedGet('/api/v1/scans/3fd32cdf-0f5d-49c7-9890-60292f142148');
 
       expect(response.status).toBe(404);
       expect(response.body.error).toBe('Scan not found.');
     });
+  });
+});
+
+describe('Scan authentication', () => {
+  beforeEach(() => {
+    process.env.JWT_SECRET = 'test-secret-for-jest-only';
+    jest.clearAllMocks();
+  });
+
+  test('rejects requests without an Authorization header', async () => {
+    const response = await request(app)
+      .get('/api/v1/scans');
+
+    expect(response.status).toBe(401);
+    expect(response.body.error).toBe('Authentication required.');
+    expect(Scan.findAndCountAll).not.toHaveBeenCalled();
+  });
+
+  test('rejects an invalid JWT', async () => {
+    const response = await request(app)
+      .get('/api/v1/scans')
+      .set('Authorization', 'Bearer invalid-token');
+
+    expect(response.status).toBe(401);
+    expect(response.body.error).toBe('Invalid authentication token.');
+    expect(Scan.findAndCountAll).not.toHaveBeenCalled();
+  });
+
+  test('rejects a JWT signed with a different secret', async () => {
+    const token = jwt.sign(
+      {},
+      'some-other-secret',
+      {
+        algorithm: 'HS256',
+        subject: 'test-user-id',
+        expiresIn: '1h',
+        issuer: 'api-sentinel',
+        audience: 'api-sentinel-client',
+      }
+    );
+
+    const response = await request(app)
+      .get('/api/v1/scans')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(response.status).toBe(401);
+    expect(Scan.findAndCountAll).not.toHaveBeenCalled();
+  });
+
+  test('rejects a JWT signed using an unsupported algorithm', async () => {
+    const token = jwt.sign(
+      {},
+      process.env.JWT_SECRET,
+      {
+        algorithm: 'HS384',
+        subject: 'test-user-id',
+        expiresIn: '1h',
+        issuer: 'api-sentinel',
+        audience: 'api-sentinel-client',
+      }
+    );
+
+    const response = await request(app)
+      .get('/api/v1/scans')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(response.status).toBe(401);
+    expect(Scan.findAndCountAll).not.toHaveBeenCalled();
+  });
+
+  test('rejects an expired JWT', async () => {
+    const token = jwt.sign(
+      {},
+      process.env.JWT_SECRET,
+      {
+        algorithm: 'HS256',
+        subject: 'test-user-id',
+        expiresIn: -1,
+        issuer: 'api-sentinel',
+        audience: 'api-sentinel-client',
+      }
+    );
+
+    const response = await request(app)
+      .get('/api/v1/scans')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(response.status).toBe(401);
+    expect(response.body.error).toBe('Invalid authentication token.');
+    expect(Scan.findAndCountAll).not.toHaveBeenCalled();
   });
 });

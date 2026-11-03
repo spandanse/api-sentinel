@@ -1,6 +1,7 @@
 jest.mock('../src/models', () => ({
   User: {
     create: jest.fn(),
+    findOne: jest.fn(),
   },
 }));
 
@@ -128,5 +129,150 @@ describe('Authentication API', () => {
       expect(response.status).toBe(409);
       expect(response.body.error).toBe('Email already registered.');
     });
+  });
+});
+
+describe('POST /api/v1/auth/login', () => {
+  const jwt = require('jsonwebtoken');
+
+  const testUser = {
+    id: 'user-login-123',
+    name: 'Login Test User',
+    email: 'login@example.com',
+    passwordHash: '$2b$12$placeholder',
+  };
+
+  beforeEach(() => {
+    process.env.JWT_SECRET = 'test-secret-for-jest-only';
+    User.findOne.mockReset();
+  });
+
+  test('logs in successfully and returns a valid JWT', async () => {
+    const passwordHash = await bcrypt.hash('StrongPassword123!', 4);
+
+    User.findOne.mockResolvedValue({
+      ...testUser,
+      passwordHash,
+    });
+
+    const response = await request(app)
+      .post('/api/v1/auth/login')
+      .send({
+        email: ' LOGIN@EXAMPLE.COM ',
+        password: 'StrongPassword123!',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.message).toBe('Login successful.');
+    expect(response.body.data.tokenType).toBe('Bearer');
+    expect(response.body.data.expiresIn).toBe(3600);
+    expect(response.body.data.user).toEqual({
+      id: testUser.id,
+      name: testUser.name,
+      email: testUser.email,
+    });
+
+    const decoded = jwt.verify(
+      response.body.data.token,
+      process.env.JWT_SECRET,
+      {
+        algorithms: ['HS256'],
+        issuer: 'api-sentinel',
+        audience: 'api-sentinel-client',
+      }
+    );
+
+    expect(decoded.sub).toBe(testUser.id);
+    expect(response.body.data.user).not.toHaveProperty('passwordHash');
+  });
+
+  test('rejects an incorrect password', async () => {
+    const passwordHash = await bcrypt.hash('CorrectPassword123!', 4);
+
+    User.findOne.mockResolvedValue({
+      ...testUser,
+      passwordHash,
+    });
+
+    const response = await request(app)
+      .post('/api/v1/auth/login')
+      .send({
+        email: testUser.email,
+        password: 'WrongPassword123!',
+      });
+
+    expect(response.status).toBe(401);
+    expect(response.body.message).toBe('Invalid email or password.');
+  });
+
+  test('rejects an unknown email', async () => {
+    User.findOne.mockResolvedValue(null);
+
+    const response = await request(app)
+      .post('/api/v1/auth/login')
+      .send({
+        email: 'unknown@example.com',
+        password: 'StrongPassword123!',
+      });
+
+    expect(response.status).toBe(401);
+    expect(response.body.message).toBe('Invalid email or password.');
+  });
+
+  test('rejects missing or incorrectly typed fields', async () => {
+    const response = await request(app)
+      .post('/api/v1/auth/login')
+      .send({ email: testUser.email });
+
+    expect(response.status).toBe(400);
+    expect(User.findOne).not.toHaveBeenCalled();
+  });
+
+  test('rejects passwords exceeding 72 UTF-8 bytes', async () => {
+    const response = await request(app)
+      .post('/api/v1/auth/login')
+      .send({
+        email: testUser.email,
+        password: 'a'.repeat(73),
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.message).toBe(
+      'Password must not exceed 72 bytes.'
+    );
+    expect(User.findOne).not.toHaveBeenCalled();
+  });
+
+  test('rejects invalid email format', async () => {
+    const response = await request(app)
+      .post('/api/v1/auth/login')
+      .send({
+        email: 'not-an-email',
+        password: 'StrongPassword123!',
+      });
+
+    expect(response.status).toBe(400);
+    expect(User.findOne).not.toHaveBeenCalled();
+  });
+
+  test('does not issue a token when JWT secret is missing', async () => {
+    const passwordHash = await bcrypt.hash('StrongPassword123!', 4);
+
+    User.findOne.mockResolvedValue({
+      ...testUser,
+      passwordHash,
+    });
+
+    delete process.env.JWT_SECRET;
+
+    const response = await request(app)
+      .post('/api/v1/auth/login')
+      .send({
+        email: testUser.email,
+        password: 'StrongPassword123!',
+      });
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe('Internal server error.');
   });
 });
