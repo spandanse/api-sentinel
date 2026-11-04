@@ -62,12 +62,20 @@ router.get('/', async (req, res) => {
 
   const offset = (page - 1) * limit;
 
-  const result = await Scan.findAndCountAll({
+  const queryOptions = {
     attributes: SCAN_ATTRIBUTES,
     limit,
     offset,
     order: [['createdAt', 'DESC']],
-  });
+  };
+
+  // Administrators can view all scans, including legacy CLI scans.
+  // Regular users can only view scans belonging to their account.
+  if (req.user.role !== 'admin') {
+    queryOptions.where = { userId: req.user.id };
+  }
+
+  const result = await Scan.findAndCountAll(queryOptions);
 
   return res.status(200).json({
     data: result.rows,
@@ -95,7 +103,15 @@ router.get('/:id', async (req, res) => {
     });
   }
 
-  const scan = await Scan.findByPk(id, {
+  const where = { id };
+
+  // Returning 404 for another user's scan avoids revealing its existence.
+  if (req.user.role !== 'admin') {
+    where.userId = req.user.id;
+  }
+
+  const scan = await Scan.findOne({
+    where,
     attributes: SCAN_ATTRIBUTES,
     include: [{
       model: Finding,

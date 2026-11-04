@@ -57,6 +57,31 @@ describe('Authentication API', () => {
       expect(JSON.stringify(response.body)).not.toContain(savedUser.passwordHash);
     });
 
+    test('ignores a client-supplied admin role during registration', async () => {
+      User.create.mockImplementation(async (data) => ({
+        id: 'user-123',
+        name: data.name,
+        email: data.email,
+        role: 'user',
+      }));
+
+      const response = await request(app)
+        .post('/api/v1/auth/register')
+        .send({
+          name: 'Test User',
+          email: 'test@example.com',
+          password: 'StrongPassword123!',
+          role: 'admin',
+        });
+
+      expect(response.status).toBe(201);
+
+      const savedUser = User.create.mock.calls[0][0];
+
+      expect(savedUser).not.toHaveProperty('role');
+      expect(response.body.data).not.toHaveProperty('role');
+    });
+
     test('rejects missing or incorrectly typed fields', async () => {
       const response = await request(app)
         .post('/api/v1/auth/register')

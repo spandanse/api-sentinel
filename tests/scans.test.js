@@ -1,15 +1,18 @@
 jest.mock('../src/models', () => ({
   Scan: {
     findAndCountAll: jest.fn(),
-    findByPk: jest.fn(),
+    findOne: jest.fn(),
   },
   Finding: {},
+  User: {
+    findByPk: jest.fn(),
+  },
 }));
 
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
 const app = require('../src/app');
-const { Scan } = require('../src/models');
+const { Scan, User } = require('../src/models');
 
 function authenticatedGet(path) {
   const token = jwt.sign(
@@ -33,6 +36,12 @@ describe('Scan management API', () => {
   beforeEach(() => {
     process.env.JWT_SECRET = 'test-secret-for-jest-only';
     jest.clearAllMocks();
+    User.findByPk.mockResolvedValue({
+      id: 'test-user-id',
+      name: 'Test User',
+      email: 'test@example.com',
+      role: 'user',
+    });
   });
 
   describe('GET /api/v1/scans', () => {
@@ -63,6 +72,7 @@ describe('Scan management API', () => {
           'id', 'target', 'status', 'startedAt', 'completedAt',
           'durationMs', 'checksRun', 'summary', 'createdAt', 'updatedAt',
         ],
+        where: { userId: 'test-user-id' },
         limit: 2,
         offset: 0,
         order: [['createdAt', 'DESC']],
@@ -84,6 +94,57 @@ describe('Scan management API', () => {
         total: 0,
         totalPages: 0,
       });
+    });
+
+    test('allows administrators to list all scans', async () => {
+      User.findByPk.mockResolvedValue({
+        id: 'admin-user-id',
+        name: 'Admin User',
+        email: 'admin@example.com',
+        role: 'admin',
+      });
+
+      Scan.findAndCountAll.mockResolvedValue({ rows: [], count: 0 });
+
+      const response = await authenticatedGet('/api/v1/scans');
+
+      expect(response.status).toBe(200);
+      expect(Scan.findAndCountAll).toHaveBeenCalledWith({
+        attributes: [
+          'id', 'target', 'status', 'startedAt', 'completedAt',
+          'durationMs', 'checksRun', 'summary', 'createdAt', 'updatedAt',
+        ],
+        limit: 10,
+        offset: 0,
+        order: [['createdAt', 'DESC']],
+      });
+    });
+
+    test('does not include legacy scans without an owner for normal users', async () => {
+      Scan.findAndCountAll.mockResolvedValue({
+        rows: [],
+        count: 0,
+      });
+
+      const response = await authenticatedGet('/api/v1/scans');
+
+      expect(response.status).toBe(200);
+      expect(Scan.findAndCountAll).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: 'test-user-id' },
+        })
+      );
+    });
+
+    test('passes scan-list database errors to centralized error handling', async () => {
+      Scan.findAndCountAll.mockRejectedValue(
+        new Error('Database unavailable')
+      );
+
+      const response = await authenticatedGet('/api/v1/scans');
+
+      expect(response.status).toBe(500);
+      expect(response.body.error).toBe('Internal server error.');
     });
 
     test('rejects invalid pagination parameters', async () => {
@@ -108,16 +169,18 @@ describe('Scan management API', () => {
         ],
       };
 
-      Scan.findByPk.mockResolvedValue(mockScan);
+      Scan.findOne.mockResolvedValue(mockScan);
 
       const response = await authenticatedGet('/api/v1/scans/3fd32cdf-0f5d-49c7-9890-60292f142148');
 
       expect(response.status).toBe(200);
       expect(response.body.data).toEqual(mockScan);
 
-      expect(Scan.findByPk).toHaveBeenCalledWith(
-        '3fd32cdf-0f5d-49c7-9890-60292f142148',
-        {
+      expect(Scan.findOne).toHaveBeenCalledWith({
+          where: {
+            id: '3fd32cdf-0f5d-49c7-9890-60292f142148',
+            userId: 'test-user-id',
+          },
           attributes: [
             'id', 'target', 'status', 'startedAt', 'completedAt',
             'durationMs', 'checksRun', 'summary', 'createdAt', 'updatedAt',
@@ -135,16 +198,86 @@ describe('Scan management API', () => {
       );
     });
 
+    test('does not expose scans owned by another user', async () => {
+      // A scan owned by someone else will not match the ownership-filtered query.
+      Scan.findOne.mockResolvedValue(null);
+
+      const scanId = '3fd32cdf-0f5d-49c7-9890-60292f142148';
+
+      const response = await authenticatedGet(`/api/v1/scans/${scanId}`);
+
+      expect(response.status).toBe(404);
+      expect(response.body.error).toBe('Scan not found.');
+      expect(Scan.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            id: scanId,
+            userId: 'test-user-id',
+          },
+        })
+      );
+    });
+
+    test('allows administrators to view legacy scans without an owner', async () => {
+      User.findByPk.mockResolvedValue({
+        id: 'admin-user-id',
+        name: 'Admin User',
+        email: 'admin@example.com',
+        role: 'admin',
+      });
+
+      Scan.findOne.mockResolvedValue({
+        id: '3fd32cdf-0f5d-49c7-9890-60292f142148',
+        status: 'completed',
+        findings: [],
+      });
+
+      const response = await authenticatedGet(
+        '/api/v1/scans/3fd32cdf-0f5d-49c7-9890-60292f142148'
+      );
+
+      expect(response.status).toBe(200);
+      expect(Scan.findOne).toHaveBeenCalledWith({
+        where: { id: '3fd32cdf-0f5d-49c7-9890-60292f142148' },
+        attributes: [
+          'id', 'target', 'status', 'startedAt', 'completedAt',
+          'durationMs', 'checksRun', 'summary', 'createdAt', 'updatedAt',
+        ],
+        include: [{
+          model: expect.anything(),
+          as: 'findings',
+          attributes: [
+            'id', 'scanId', 'checkId', 'title', 'status',
+            'severity', 'confidence', 'evidence', 'remediation',
+            'createdAt', 'updatedAt',
+          ],
+        }],
+      });
+    });
+
+    test('passes scan-detail database errors to centralized error handling', async () => {
+      Scan.findOne.mockRejectedValue(
+        new Error('Database unavailable')
+      );
+
+      const response = await authenticatedGet(
+        '/api/v1/scans/3fd32cdf-0f5d-49c7-9890-60292f142148'
+      );
+
+      expect(response.status).toBe(500);
+      expect(response.body.error).toBe('Internal server error.');
+    });
+
     test('rejects an invalid scan ID', async () => {
       const response = await authenticatedGet('/api/v1/scans/not-a-uuid');
 
       expect(response.status).toBe(400);
       expect(response.body.error).toBe('Invalid scan ID.');
-      expect(Scan.findByPk).not.toHaveBeenCalled();
+      expect(Scan.findOne).not.toHaveBeenCalled();
     });
 
     test('returns 404 when the scan does not exist', async () => {
-      Scan.findByPk.mockResolvedValue(null);
+      Scan.findOne.mockResolvedValue(null);
 
       const response = await authenticatedGet('/api/v1/scans/3fd32cdf-0f5d-49c7-9890-60292f142148');
 
@@ -158,6 +291,12 @@ describe('Scan authentication', () => {
   beforeEach(() => {
     process.env.JWT_SECRET = 'test-secret-for-jest-only';
     jest.clearAllMocks();
+    User.findByPk.mockResolvedValue({
+      id: 'test-user-id',
+      name: 'Test User',
+      email: 'test@example.com',
+      role: 'user',
+    });
   });
 
   test('rejects requests without an Authorization header', async () => {
@@ -218,6 +357,30 @@ describe('Scan authentication', () => {
       .set('Authorization', `Bearer ${token}`);
 
     expect(response.status).toBe(401);
+    expect(Scan.findAndCountAll).not.toHaveBeenCalled();
+  });
+
+
+  test('rejects a valid JWT when its user no longer exists', async () => {
+    User.findByPk.mockResolvedValue(null);
+
+    const response = await authenticatedGet('/api/v1/scans');
+
+    expect(response.status).toBe(401);
+    expect(response.body.error).toBe('Authentication failed.');
+    expect(User.findByPk).toHaveBeenCalledWith('test-user-id', {
+      attributes: ['id', 'name', 'email', 'role'],
+    });
+    expect(Scan.findAndCountAll).not.toHaveBeenCalled();
+  });
+
+  test('passes database errors to centralized error handling', async () => {
+    User.findByPk.mockRejectedValue(new Error('Database unavailable'));
+
+    const response = await authenticatedGet('/api/v1/scans');
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe('Internal server error.');
     expect(Scan.findAndCountAll).not.toHaveBeenCalled();
   });
 

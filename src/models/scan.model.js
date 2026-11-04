@@ -18,6 +18,12 @@ const Scan = sequelize.define(
       },
     },
 
+    userId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      field: 'user_id',
+    },
+
     status: {
       type: DataTypes.ENUM('queued', 'running', 'completed', 'failed'),
       allowNull: false,

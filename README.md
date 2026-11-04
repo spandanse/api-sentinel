@@ -6,7 +6,7 @@ It executes security tests against authorized API targets, evaluates their respo
 
 ## Project Status
 
-**Backend and initial scanner implementation in progress.**
+**Backend security foundations and initial scanner implementation completed. Scanner and platform enhancements are in progress.**
 
 ### Implemented Features
 
@@ -25,7 +25,11 @@ It executes security tests against authorized API targets, evaluates their respo
 - REST APIs for retrieving scan history and individual scan details.
 - User registration with bcrypt password hashing.
 - User login with JWT authentication.
-- Protected scan management endpoints.
+- Database-backed JWT authentication and account validation.
+- Role-based access control for regular users and administrators.
+- Admin-only user listing endpoint.
+- Scan ownership and user-level scan data isolation.
+- Administrative access to all scans, including legacy ownerless scans.
 - Centralized API error handling.
 - Automated tests using Jest and Supertest.
 
@@ -59,6 +63,8 @@ An ERROR is not automatically treated as a vulnerability.
 **Authentication and Security**
 - JSON Web Tokens (JWT)
 - bcryptjs
+- Role-based access control (RBAC)
+- Database-backed account validation
 - Target validation
 - Request timeouts
 - Redirect protection
@@ -81,10 +87,17 @@ API Sentinel consists of three main components.
 The main backend application handles:
 
 - User registration and authentication.
-- JWT-based access control.
+- JWT verification and database-backed account validation.
+- Role-based authorization.
+- Administrative user listing.
 - Scan history retrieval.
 - Individual scan result retrieval.
+- Scan ownership and access isolation.
 - Centralized error handling.
+
+Regular users can access only scans associated with their accounts. Administrators can access all scans, including legacy scans without an assigned owner.
+
+The platform uses the user's current database role for authorization rather than trusting role information supplied by the client.
 
 ### 2. Security Scanner
 
@@ -135,13 +148,15 @@ It is designed exclusively for controlled local testing.
     │   ├── middleware/
     │   │   ├── auth.middleware.js
     │   │   ├── error.middleware.js
-    │   │   └── notFound.middleware.js
+    │   │   ├── notFound.middleware.js
+    │   │   └── role.middleware.js
     │   ├── models/
     │   │   ├── finding.model.js
     │   │   ├── index.js
     │   │   ├── scan.model.js
     │   │   └── user.model.js
     │   ├── routes/
+    │   │   ├── admin.routes.js
     │   │   ├── auth.routes.js
     │   │   └── scans.routes.js
     │   ├── app.js
@@ -149,7 +164,9 @@ It is designed exclusively for controlled local testing.
     ├── tests/
     │   ├── app.test.js
     │   ├── auth.test.js
+    │   ├── admin.routes.test.js
     │   ├── error-handling.test.js
+    │   ├── role.middleware.test.js
     │   └── scans.test.js
     ├── vulnerable-api/
     │   ├── src/
@@ -222,7 +239,14 @@ Use the same database credentials in `.env`.
 
     npm run db:migrate
 
-This creates the required database tables for users, scans and findings.
+The migrations create and update the required database structures:
+
+- `001-create-scans-and-findings.js`: Creates the scans and findings tables.
+- `002-create-users.js`: Creates the users table.
+- `003-add-user-roles.js`: Adds the user role column.
+- `004-add-scan-ownership.js`: Adds the nullable scan ownership relationship.
+
+Migrations are tracked in the `schema_migrations` table.
 
 ## Running the Application
 
@@ -260,6 +284,8 @@ The scanner validates the configured local test target, executes its security ch
 
 The initial scanner is restricted to the local vulnerable test API at `http://127.0.0.1:4001`.
 
+The current CLI scan workflow does not associate scans with a platform user. Such scans are stored without an owner and are accessible through the platform only to administrators.
+
 ## Available API Endpoints
 
 Base URL: `http://localhost:3000`
@@ -279,22 +305,45 @@ Base URL: `http://localhost:3000`
 
 Registration accepts a name, email and password.
 
+New accounts receive the regular `user` role by default. A client cannot assign itself the administrator role through registration.
+
 Login returns a signed JWT access token. The token must be supplied as a Bearer token when accessing protected endpoints.
 
 Example:
 
     Authorization: Bearer YOUR_ACCESS_TOKEN
 
+The platform verifies the token and checks that the associated user account still exists. The current role is retrieved from the database.
+
 ### Scan Management
 
-| Method | Endpoint | Authentication |
-|---|---|---|
-| GET | `/api/v1/scans` | Required |
-| GET | `/api/v1/scans/:id` | Required |
+| Method | Endpoint | Authentication | Access |
+|---|---|---|---|
+| GET | `/api/v1/scans` | Required | User: own scans; Admin: all scans |
+| GET | `/api/v1/scans/:id` | Required | User: own scan; Admin: any scan |
 
 The scan listing endpoint supports pagination.
 
+Query parameters:
+
+- `page`: Page number (default: 1).
+- `limit`: Number of records per page (default: 10, maximum: 50).
+
 The scan detail endpoint returns the selected scan and its associated findings.
+
+A regular user receives a 404 response when requesting a scan belonging to another user. This avoids revealing whether another user's scan exists.
+
+### Administration
+
+| Method | Endpoint | Authentication | Access |
+|---|---|---|---|
+| GET | `/api/v1/admin/users` | Required | Admin only |
+
+The administrative user listing endpoint returns a maximum of 50 users, including their IDs, names, email addresses, roles and account creation timestamps.
+
+Password hashes and other authentication secrets are never included in the response.
+
+Regular users receive a 403 Forbidden response when attempting to access administrative endpoints.
 
 ## Reports
 
@@ -328,11 +377,13 @@ The platform currently uses three primary models.
 
 | Model | Purpose |
 |---|---|
-| User | Stores registered platform users and password hashes. |
-| Scan | Stores scan metadata, status, target and summary. |
+| User | Stores registered platform users, password hashes and roles. |
+| Scan | Stores scan metadata, status, target, summary and optional owner. |
 | Finding | Stores individual security check results and remediation details. |
 
 A scan can have multiple associated findings.
+
+A scan may belong to a platform user through its nullable `user_id` foreign key. The relationship uses `ON DELETE SET NULL`, preserving historical scan records if an account is deleted.
 
 ## Running Tests
 
@@ -347,13 +398,17 @@ The test suite covers:
 - Request failures and timeout handling.
 - Report generation and validation.
 - User registration and password hashing.
+- Protection against client-supplied administrator roles.
 - Login and JWT verification.
-- Protected scan endpoints.
-- Scan listing and retrieval.
+- Database-backed authentication.
+- Role-based authorization.
+- Administrative endpoint access.
+- Scan ownership and data isolation.
+- Scan listing, pagination and retrieval.
 - Error handling.
 - Vulnerable test API behavior.
 
-The current test suite contains **64 passing tests across 8 test suites**.
+**Current test status: 82 passing tests across 10 test suites.**
 
 ## Security Roadmap
 
@@ -361,10 +416,9 @@ The following are planned extensions. They are not yet implemented scanner capab
 
 ### Authentication and Authorization
 
-- Additional JWT validation checks.
-- Token expiration and invalid-token handling.
 - Privilege escalation testing.
 - Expanded object-level and function-level authorization checks.
+- Additional JWT security checks.
 
 ### Injection Testing
 
@@ -390,9 +444,10 @@ The following are planned extensions. They are not yet implemented scanner capab
 
 ### Platform Enhancements
 
+- Authenticated scan creation and execution.
 - Target registration and management.
 - Modular and extensible scanner engine.
-- Scan scheduling and management.
+- Background scan execution and scheduling.
 - Scan history and finding remediation tracking.
 - Improved risk scoring and report presentation.
 - React and TypeScript frontend.

@@ -41,6 +41,15 @@ const User = sequelize.define(
         notEmpty: true,
       },
     },
+
+    role: {
+      type: DataTypes.ENUM('user', 'admin'),
+      allowNull: false,
+      defaultValue: 'user',
+      validate: {
+        isIn: [['user', 'admin']],
+      },
+    },
   },
   {
     tableName: 'users',

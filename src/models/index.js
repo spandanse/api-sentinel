@@ -13,6 +13,18 @@ Finding.belongsTo(Scan, {
   as: 'scan',
 });
 
+Scan.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'owner',
+  onDelete: 'SET NULL',
+});
+
+User.hasMany(Scan, {
+  foreignKey: 'userId',
+  as: 'scans',
+  onDelete: 'SET NULL',
+});
+
 module.exports = {
   Scan,
   Finding,
